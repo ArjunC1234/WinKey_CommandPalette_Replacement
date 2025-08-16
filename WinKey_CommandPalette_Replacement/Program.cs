@@ -37,6 +37,7 @@ internal static class Program
     // State tracking
     static bool _winDown = false;
     static bool _ctrlDown = false;
+    static bool _passthroughMode = false;  // NEW: Passthrough mode flag
     static int _winKeyPressed = 0;
     static List<KeyEvent> _keysWhileWinDown = new List<KeyEvent>();
 
@@ -139,7 +140,7 @@ internal static class Program
             int vk = info.vkCode;
 
             // Debug output
-            Console.WriteLine($"Key: {vk:X} ({(VirtualKeyCode)vk}) {(isDown ? "DOWN" : "UP")} - Win: {_winDown}");
+            Console.WriteLine($"Key: {vk:X} ({(VirtualKeyCode)vk}) {(isDown ? "DOWN" : "UP")} - Win: {_winDown}, Passthrough: {_passthroughMode}");
 
             // Track Ctrl state
             if (vk == VK_LCONTROL || vk == VK_RCONTROL || vk == VK_CONTROL)
@@ -147,11 +148,32 @@ internal static class Program
                 if (isDown) _ctrlDown = true;
                 if (isUp) _ctrlDown = false;
 
-                // If Win is down, record this event
+                // If Win is down, handle based on passthrough mode
                 if (_winDown)
                 {
-                    _keysWhileWinDown.Add(new KeyEvent { VirtualKey = vk, IsDown = isDown, WParam = wParam });
-                    return (IntPtr)1; // Block it
+                    if (!_passthroughMode && isDown) // First key pressed after Win
+                    {
+                        Console.WriteLine($"Second key detected: {vk:X} - entering passthrough mode");
+
+                        // Send Win key down to Windows immediately
+                        keybd_event((byte)_winKeyPressed, 0, 0, OUR_TAG);
+                        _passthroughMode = true;
+
+                        // Let this key (and all future keys) pass through naturally
+                        return CallNextHookEx(_hook, nCode, wParam, lParam);
+                    }
+                    else if (_passthroughMode)
+                    {
+                        // In passthrough mode - let everything pass through naturally
+                        Console.WriteLine($"Passthrough mode: {vk:X} {(isDown ? "DOWN" : "UP")}");
+                        return CallNextHookEx(_hook, nCode, wParam, lParam);
+                    }
+                    else
+                    {
+                        // Still monitoring for first key (or key up events before passthrough)
+                        _keysWhileWinDown.Add(new KeyEvent { VirtualKey = vk, IsDown = isDown, WParam = wParam });
+                        return (IntPtr)1; // Block it
+                    }
                 }
 
                 return CallNextHookEx(_hook, nCode, wParam, lParam);
@@ -177,25 +199,29 @@ internal static class Program
                     _winDown = true;
                     _winKeyPressed = vk;
                     _keysWhileWinDown.Clear();
+                    _passthroughMode = false; // Reset passthrough mode
                     return (IntPtr)1; // Always block Win key
                 }
                 if (isUp)
                 {
-                    Console.WriteLine($"Win key up: {vk:X}, keys pressed: {_keysWhileWinDown.Count}");
-                    _winDown = false;
-                    bool soloTap = _keysWhileWinDown.Count == 0;
+                    Console.WriteLine($"Win key up: {vk:X}, passthrough mode: {_passthroughMode}");
+                    _winDown = false; 
 
-                    if (soloTap)
+                    if (_passthroughMode)
                     {
-                        Console.WriteLine("Solo Win tap detected - firing command palette");
-                        ActivateCommandPalette();
+                        Console.WriteLine("Ending passthrough mode - sending Win key up");
+                        // Send Win key up to Windows to complete the sequence
+                        keybd_event((byte)_winKeyPressed, 0, KEYEVENTF_KEYUP, OUR_TAG);
+                        _passthroughMode = false;
                     }
                     else
                     {
-                        Console.WriteLine("Win+keys combo detected - simulating sequence");
-                        SimulateWinKeySequence();
+                        // Solo Win tap
+                        Console.WriteLine("Solo Win tap detected - firing command palette");
+                        ActivateCommandPalette();
                     }
 
+                    _keysWhileWinDown.Clear();
                     return (IntPtr)1;
                 }
             }
@@ -204,9 +230,29 @@ internal static class Program
                 // Any other key while Win is held
                 if (_winDown)
                 {
-                    Console.WriteLine($"Key while Win down: {vk:X} {(isDown ? "DOWN" : "UP")}");
-                    _keysWhileWinDown.Add(new KeyEvent { VirtualKey = vk, IsDown = isDown, WParam = wParam });
-                    return (IntPtr)1; // Block it, we'll replay later
+                    if (!_passthroughMode && isDown) // First key pressed after Win
+                    {
+                        Console.WriteLine($"Second key detected: {vk:X} - entering passthrough mode");
+
+                        // Send Win key down to Windows immediately
+                        keybd_event((byte)_winKeyPressed, 0, 0, OUR_TAG);
+                        _passthroughMode = true;
+
+                        // Let this key (and all future keys) pass through naturally
+                        return CallNextHookEx(_hook, nCode, wParam, lParam);
+                    }
+                    else if (_passthroughMode)
+                    {
+                        // In passthrough mode - let everything pass through naturally
+                        Console.WriteLine($"Passthrough mode: {vk:X} {(isDown ? "DOWN" : "UP")}");
+                        return CallNextHookEx(_hook, nCode, wParam, lParam);
+                    }
+                    else
+                    {
+                        // Still monitoring for first key (or key up events before passthrough)
+                        _keysWhileWinDown.Add(new KeyEvent { VirtualKey = vk, IsDown = isDown, WParam = wParam });
+                        return (IntPtr)1; // Block it
+                    }
                 }
             }
         }

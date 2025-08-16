@@ -3,8 +3,8 @@
 # Can run as regular user for startup management
 
 param(
-    [Parameter(HelpMessage = "Action to perform: install, uninstall, startup-enable, startup-disable, status, logs, or menu")]
-    [ValidateSet("install", "uninstall", "startup-enable", "startup-disable", "status", "logs", "menu")]
+    [Parameter(HelpMessage = "Action to perform: install, uninstall, startup-enable, startup-disable, status, logs, start, stop, update, or menu")]
+    [ValidateSet("install", "uninstall", "startup-enable", "startup-disable", "status", "logs", "start", "stop", "update", "menu")]
     [string]$Action = "menu"
 )
 
@@ -15,6 +15,7 @@ $ZipName = "WinKey_CommandPalette_Replacement.zip"
 $InstallPath = "$env:ProgramFiles\$AppName"
 $AppPath = Join-Path $InstallPath $ExeName
 $DownloadUrl = "https://github.com/ArjunC1234/WinKey_CommandPallette_Replacement/releases/latest/download/$ZipName"
+$GitHubApiUrl = "https://api.github.com/repos/ArjunC1234/WinKey_CommandPallette_Replacement/releases/latest"
 
 # Function to get best desktop path
 function Get-DesktopPath {
@@ -72,31 +73,568 @@ function Show-Menu {
     Show-Header
     Write-ColoredOutput "Choose an action:" $ColorPrompt
     Write-ColoredOutput ""
-    Write-ColoredOutput "1. Install $AppName" $ColorPrompt
-    Write-ColoredOutput "2. Uninstall $AppName" $ColorPrompt
-    Write-ColoredOutput "3. Enable startup (run when Windows starts)" $ColorPrompt
-    Write-ColoredOutput "4. Disable startup" $ColorPrompt
-    Write-ColoredOutput "5. Check status" $ColorPrompt
-    Write-ColoredOutput "6. View startup logs" $ColorPrompt
-    Write-ColoredOutput "7. Exit" $ColorPrompt
+    Write-ColoredOutput "📦 Installation & Updates:" $ColorInfo
+    Write-ColoredOutput "1. Install $AppName" "White"
+    Write-ColoredOutput "2. Uninstall $AppName" "White"
+    Write-ColoredOutput "3. Check for updates" "White"
+    Write-ColoredOutput ""
+    Write-ColoredOutput "🎮 Application Control:" $ColorSuccess
+    Write-ColoredOutput "4. Start $AppName" "White"
+    Write-ColoredOutput "5. Stop $AppName" "White"
+    Write-ColoredOutput ""
+    Write-ColoredOutput "⚡ Startup Configuration:" $ColorWarning
+    Write-ColoredOutput "6. Enable startup (run when Windows starts)" "White"
+    Write-ColoredOutput "7. Disable startup" "White"
+    Write-ColoredOutput ""
+    Write-ColoredOutput "📊 Status & Information:" $ColorPrompt
+    Write-ColoredOutput "8. Check status" "White"
+    Write-ColoredOutput "9. View startup logs" "White"
+    Write-ColoredOutput ""
+    Write-ColoredOutput "10. Exit" "Gray"
     Write-ColoredOutput ""
     
-    $choice = Read-Host "Enter your choice (1-7)"
+    $choice = Read-Host "Enter your choice (1-10)"
     
     switch ($choice) {
         "1" { Install-Application }
         "2" { Uninstall-Application }
-        "3" { Enable-Startup }
-        "4" { Disable-Startup }
-        "5" { Show-Status }
-        "6" { Show-StartupLogs }
-        "7" { exit 0 }
+        "3" { Check-Updates }
+        "4" { Start-Application }
+        "5" { Stop-Application }
+        "6" { Enable-Startup }
+        "7" { Disable-Startup }
+        "8" { Show-Status }
+        "9" { Show-StartupLogs }
+        "10" { exit 0 }
         default { 
             Write-ColoredOutput "Invalid choice. Please try again." $ColorError
             Start-Sleep 2
             Show-Menu 
         }
     }
+}
+
+function Get-ApplicationVersion {
+    param([string]$ExePath)
+    
+    try {
+        # Only read version from the release tag file
+        $releaseTagFile = Join-Path (Split-Path $ExePath -Parent) "release-tag.txt"
+        if (Test-Path $releaseTagFile) {
+            $versionFromTag = (Get-Content $releaseTagFile -First 1).Trim()
+            Write-ColoredOutput "Version from release tag: '$versionFromTag'" $ColorInfo
+            return $versionFromTag
+        }
+        
+        Write-ColoredOutput "No release tag file found - this may be a fresh installation" $ColorWarning
+        return "Unknown"
+    }
+    catch {
+        Write-ColoredOutput "Error reading release tag file: $_" $ColorError
+        return "Unknown"
+    }
+}
+
+function Get-LatestVersionFromGitHub {
+    try {
+        Write-ColoredOutput "Checking GitHub for latest release..." $ColorInfo
+        
+        # Create web request with headers to avoid rate limiting
+        $webRequest = [System.Net.WebRequest]::Create($GitHubApiUrl)
+        $webRequest.UserAgent = "PowerShell-WinKeyRemapper-Updater"
+        $webRequest.Accept = "application/vnd.github.v3+json"
+        
+        $response = $webRequest.GetResponse()
+        $stream = $response.GetResponseStream()
+        $reader = New-Object System.IO.StreamReader($stream)
+        $jsonResponse = $reader.ReadToEnd()
+        
+        # Clean up
+        $reader.Close()
+        $stream.Close()
+        $response.Close()
+        
+        Write-ColoredOutput "DEBUG: Raw GitHub API response (first 500 chars):" $ColorInfo
+        Write-ColoredOutput ($jsonResponse.Substring(0, [Math]::Min(500, $jsonResponse.Length)) + "...") $ColorInfo
+        
+        # Parse JSON response
+        $releaseInfo = $jsonResponse | ConvertFrom-Json
+        
+        Write-ColoredOutput "DEBUG: Parsed release info:" $ColorInfo
+        Write-ColoredOutput "  tag_name: '$($releaseInfo.tag_name)'" $ColorInfo
+        Write-ColoredOutput "  name: '$($releaseInfo.name)'" $ColorInfo
+        Write-ColoredOutput "  assets count: $($releaseInfo.assets.Count)" $ColorInfo
+        
+        if ($releaseInfo.assets -and $releaseInfo.assets.Count -gt 0) {
+            Write-ColoredOutput "  Available assets:" $ColorInfo
+            foreach ($asset in $releaseInfo.assets) {
+                Write-ColoredOutput "    - $($asset.name): $($asset.browser_download_url)" $ColorInfo
+            }
+        }
+        
+        # Find the download URL
+        $downloadUrl = $null
+        if ($releaseInfo.assets) {
+            $downloadAsset = $releaseInfo.assets | Where-Object { $_.name -eq $ZipName }
+            if ($downloadAsset) {
+                $downloadUrl = $downloadAsset.browser_download_url
+            } else {
+                Write-ColoredOutput "WARNING: Could not find asset named '$ZipName' in release" $ColorWarning
+                Write-ColoredOutput "Available assets: $($releaseInfo.assets.name -join ', ')" $ColorWarning
+                # Try to find any ZIP file
+                $zipAsset = $releaseInfo.assets | Where-Object { $_.name -like "*.zip" }
+                if ($zipAsset) {
+                    $downloadUrl = $zipAsset[0].browser_download_url
+                    Write-ColoredOutput "Using first ZIP file found: $($zipAsset[0].name)" $ColorInfo
+                }
+            }
+        }
+        
+        return @{
+            Version = $releaseInfo.tag_name
+            Name = $releaseInfo.name
+            PublishedAt = $releaseInfo.published_at
+            DownloadUrl = $downloadUrl
+            Body = $releaseInfo.body
+        }
+    }
+    catch {
+        Write-ColoredOutput "Failed to check for updates: $_" $ColorError
+        Write-ColoredOutput "GitHub API URL: $GitHubApiUrl" $ColorInfo
+        return $null
+    }
+}
+
+function Compare-Versions {
+    param([string]$CurrentVersion, [string]$LatestVersion)
+    
+    try {
+        Write-ColoredOutput "DEBUG: Comparing versions - Current: '$CurrentVersion', Latest: '$LatestVersion'" $ColorInfo
+        
+        # Handle special cases where latest version is not a proper semantic version
+        if ($LatestVersion -eq "release" -or $LatestVersion -eq "latest" -or $LatestVersion -eq "") {
+            Write-ColoredOutput "Latest version is not a semantic version number. Using publish date for comparison." $ColorWarning
+            return $true  # Assume update available when we can't parse version
+        }
+        
+        # Remove 'v' prefix if present and normalize
+        $current = $CurrentVersion -replace '^v', '' -replace '[^0-9.]', ''
+        $latest = $LatestVersion -replace '^v', '' -replace '[^0-9.]', ''
+        
+        Write-ColoredOutput "DEBUG: Normalized versions - Current: '$current', Latest: '$latest'" $ColorInfo
+        
+        # Check if we have valid version strings after normalization
+        if ([string]::IsNullOrEmpty($current) -or [string]::IsNullOrEmpty($latest)) {
+            Write-ColoredOutput "One or both versions are empty after normalization." $ColorWarning
+            return $true  # Assume update available
+        }
+        
+        # Split into parts and validate
+        $currentParts = @()
+        $latestParts = @()
+        
+        try {
+            $currentParts = $current.Split('.') | ForEach-Object { 
+                if ([string]::IsNullOrEmpty($_)) { 0 } else { [int]$_ }
+            }
+            $latestParts = $latest.Split('.') | ForEach-Object { 
+                if ([string]::IsNullOrEmpty($_)) { 0 } else { [int]$_ }
+            }
+        }
+        catch {
+            Write-ColoredOutput "Failed to parse version numbers as integers." $ColorWarning
+            return $true  # Assume update available
+        }
+        
+        # Pad arrays to same length
+        $maxLength = [Math]::Max($currentParts.Length, $latestParts.Length)
+        while ($currentParts.Length -lt $maxLength) { $currentParts += 0 }
+        while ($latestParts.Length -lt $maxLength) { $latestParts += 0 }
+        
+        Write-ColoredOutput "DEBUG: Version parts - Current: [$($currentParts -join '.')], Latest: [$($latestParts -join '.')]" $ColorInfo
+        
+        # Compare each part
+        for ($i = 0; $i -lt $maxLength; $i++) {
+            if ($latestParts[$i] -gt $currentParts[$i]) {
+                return $true  # Update available
+            } elseif ($latestParts[$i] -lt $currentParts[$i]) {
+                return $false # Current is newer
+            }
+        }
+        
+        return $false # Versions are equal
+    }
+    catch {
+        Write-ColoredOutput "Error in version comparison: $_" $ColorError
+        Write-ColoredOutput "Treating as update available for safety" $ColorWarning
+        return $true
+    }
+}
+
+function Check-Updates {
+    Show-Header
+    Write-ColoredOutput "Checking for updates..." $ColorInfo
+    Write-ColoredOutput ""
+    
+    # Check if app is installed
+    if (!(Test-Path $AppPath)) {
+        Write-ColoredOutput "ERROR: $AppName is not installed!" $ColorError
+        Write-ColoredOutput "Please install the application first." $ColorWarning
+        Write-ColoredOutput ""
+        Read-Host "Press Enter to continue"
+        Show-Menu
+        return
+    }
+    
+    # Get current version
+    $currentVersion = Get-ApplicationVersion -ExePath $AppPath
+    Write-ColoredOutput "Current version: $currentVersion" $ColorInfo
+    
+    # Get latest version from GitHub
+    $latestRelease = Get-LatestVersionFromGitHub
+    
+    if ($latestRelease -eq $null) {
+        Write-ColoredOutput "Could not check for updates. Please check your internet connection." $ColorError
+        Write-ColoredOutput ""
+        Read-Host "Press Enter to continue"
+        Show-Menu
+        return
+    }
+    
+    Write-ColoredOutput "Latest version: $($latestRelease.Version)" $ColorInfo
+    Write-ColoredOutput "Release name: $($latestRelease.Name)" $ColorInfo
+    Write-ColoredOutput "Published: $($latestRelease.PublishedAt)" $ColorInfo
+    Write-ColoredOutput ""
+    
+    # Handle case where GitHub tag is not a proper version number
+    if ($latestRelease.Version -eq "release" -or $latestRelease.Version -eq "latest" -or [string]::IsNullOrEmpty($latestRelease.Version)) {
+        Write-ColoredOutput "⚠ GitHub release uses non-standard version tag: '$($latestRelease.Version)'" $ColorWarning
+        Write-ColoredOutput ""
+        Write-ColoredOutput "Since we can't compare version numbers properly, here are your options:" $ColorPrompt
+        Write-ColoredOutput "1. Check the release date and description to see if it's newer than your current version" $ColorInfo
+        Write-ColoredOutput "2. Download and install the latest release anyway" $ColorInfo
+        Write-ColoredOutput ""
+        
+        $choice = Read-Host "Would you like to download the latest release anyway? (y/n)"
+        if ($choice -eq 'y' -or $choice -eq 'Y') {
+            if ($latestRelease.DownloadUrl) {
+                Install-Update -DownloadUrl $latestRelease.DownloadUrl -Version $latestRelease.Version
+            } else {
+                Write-ColoredOutput "ERROR: No download URL found in the latest release!" $ColorError
+                Write-ColoredOutput "Please visit the GitHub repository manually to download the latest version." $ColorWarning
+            }
+        } else {
+            Write-ColoredOutput "Update cancelled." $ColorInfo
+        }
+    } else {
+        # Compare versions normally
+        if (Compare-Versions -CurrentVersion $currentVersion -LatestVersion $latestRelease.Version) {
+            Write-ColoredOutput "🎉 UPDATE AVAILABLE!" $ColorSuccess
+            Write-ColoredOutput ""
+            
+            if ($latestRelease.Body) {
+                Write-ColoredOutput "Release Notes:" $ColorPrompt
+                Write-ColoredOutput ($latestRelease.Body -split "`n" | Select-Object -First 10 | Out-String) $ColorInfo
+                Write-ColoredOutput ""
+            }
+            
+            $update = Read-Host "Would you like to update now? (y/n)"
+            if ($update -eq 'y' -or $update -eq 'Y') {
+                if ($latestRelease.DownloadUrl) {
+                    Install-Update -DownloadUrl $latestRelease.DownloadUrl -Version $latestRelease.Version
+                } else {
+                    Write-ColoredOutput "ERROR: No download URL found in the latest release!" $ColorError
+                    Write-ColoredOutput "Please visit the GitHub repository manually to download the latest version." $ColorWarning
+                }
+            } else {
+                Write-ColoredOutput "Update cancelled." $ColorInfo
+            }
+        } else {
+            Write-ColoredOutput "✅ You have the latest version!" $ColorSuccess
+            Write-ColoredOutput "No update is needed." $ColorInfo
+        }
+    }
+    
+    Write-ColoredOutput ""
+    Read-Host "Press Enter to return to menu"
+    Show-Menu
+}
+
+function Install-Update {
+    param([string]$DownloadUrl, [string]$Version)
+    
+    Write-ColoredOutput ""
+    Write-ColoredOutput "Installing update to version $Version..." $ColorInfo
+    
+    # Check if we have a valid download URL
+    if ([string]::IsNullOrEmpty($DownloadUrl)) {
+        Write-ColoredOutput "ERROR: No download URL available for this release!" $ColorError
+        Write-ColoredOutput "Please visit the GitHub repository manually to download the latest version." $ColorWarning
+        Write-ColoredOutput "Repository: https://github.com/ArjunC1234/WinKey_CommandPallette_Replacement/releases" $ColorInfo
+        return
+    }
+    
+    # Check admin rights for update
+    if (-not (Test-AdminRights)) {
+        Write-ColoredOutput "ERROR: Update requires Administrator privileges!" $ColorError
+        Write-ColoredOutput "Please right-click PowerShell and select 'Run as Administrator'" $ColorWarning
+        return
+    }
+    
+    try {
+        # Stop the application if running
+        Write-ColoredOutput "Stopping running instances..." $ColorWarning
+        Stop-ApplicationProcess
+        
+        # Download the update
+        $tempZip = Join-Path $env:TEMP "WinKeyRemapper-Update-$Version.zip"
+        
+        Write-ColoredOutput "Downloading from: $DownloadUrl" $ColorInfo
+        
+        if (Download-FileWithProgress -Url $DownloadUrl -Destination $tempZip) {
+            # Backup current installation
+            $backupPath = "$InstallPath.backup"
+            if (Test-Path $InstallPath) {
+                Write-ColoredOutput "Creating backup..." $ColorInfo
+                if (Test-Path $backupPath) {
+                    Remove-Item $backupPath -Recurse -Force
+                }
+                Copy-Item $InstallPath $backupPath -Recurse -Force
+            }
+            
+            # Extract update
+            Write-ColoredOutput "Installing update..." $ColorInfo
+            
+            # Remove old files but keep config/logs
+            Get-ChildItem $InstallPath -Filter "*.exe" | Remove-Item -Force
+            Get-ChildItem $InstallPath -Filter "*.dll" | Remove-Item -Force -ErrorAction SilentlyContinue
+            
+            # Extract new files
+            Expand-Archive -Path $tempZip -DestinationPath $InstallPath -Force
+            
+            # Verify update
+            if (Test-Path $AppPath) {
+                $newVersion = Get-ApplicationVersion -ExePath $AppPath
+                Write-ColoredOutput "✅ Update completed successfully!" $ColorSuccess
+                Write-ColoredOutput "New version: $newVersion" $ColorSuccess
+                
+                # Create a version file with the GitHub release version for future reference
+                if ($Version -ne "Unknown" -and ![string]::IsNullOrEmpty($Version)) {
+                    try {
+                        $releaseTagFile = Join-Path $InstallPath "release-tag.txt"
+                        $Version | Out-File -FilePath $releaseTagFile -Encoding UTF8 -Force
+                        Write-ColoredOutput "Updated release tag file with version: $Version" $ColorSuccess
+                    }
+                    catch {
+                        Write-ColoredOutput "Warning: Could not update release tag file: $_" $ColorWarning
+                    }
+                }
+                
+                # Clean up
+                Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+                Remove-Item $backupPath -Recurse -Force -ErrorAction SilentlyContinue
+                
+                # Ask to start updated app
+                $startNow = Read-Host "Start the updated $AppName now? (y/n)"
+                if ($startNow -eq 'y' -or $startNow -eq 'Y') {
+                    Start-Application
+                    return
+                }
+            } else {
+                throw "Update verification failed - executable not found after update"
+            }
+        } else {
+            throw "Download failed"
+        }
+    }
+    catch {
+        Write-ColoredOutput "Update failed: $_" $ColorError
+        
+        # Attempt to restore backup
+        $backupPath = "$InstallPath.backup"
+        if (Test-Path $backupPath) {
+            Write-ColoredOutput "Attempting to restore backup..." $ColorWarning
+            try {
+                Remove-Item $InstallPath -Recurse -Force -ErrorAction SilentlyContinue
+                Copy-Item $backupPath $InstallPath -Recurse -Force
+                Write-ColoredOutput "Backup restored successfully" $ColorSuccess
+            }
+            catch {
+                Write-ColoredOutput "Failed to restore backup: $_" $ColorError
+            }
+        }
+    }
+}
+
+function Start-Application {
+    Show-Header
+    Write-ColoredOutput "Starting $AppName..." $ColorInfo
+    Write-ColoredOutput ""
+    
+    # Check if app is installed
+    if (!(Test-Path $AppPath)) {
+        Write-ColoredOutput "ERROR: $AppName is not installed!" $ColorError
+        Write-ColoredOutput "Please install the application first." $ColorWarning
+        Write-ColoredOutput ""
+        Read-Host "Press Enter to continue"
+        Show-Menu
+        return
+    }
+    
+    # Check if already running
+    $processNames = @("WinKey_CommandPallette_Replacement", "WinKeyRemapper", "WinKey_CommandPalette_Replacement")
+    $runningProcess = $null
+    
+    foreach ($name in $processNames) {
+        $runningProcess = Get-Process -Name $name -ErrorAction SilentlyContinue
+        if ($runningProcess) { break }
+    }
+    
+    if ($runningProcess) {
+        Write-ColoredOutput "⚠ $AppName is already running!" $ColorWarning
+        Write-ColoredOutput "Process ID: $($runningProcess.Id)" $ColorInfo
+        Write-ColoredOutput ""
+        
+        $restart = Read-Host "Would you like to restart it? (y/n)"
+        if ($restart -eq 'y' -or $restart -eq 'Y') {
+            Write-ColoredOutput "Stopping current instance..." $ColorWarning
+            Stop-ApplicationProcess
+            Start-Sleep -Seconds 2
+        } else {
+            Write-ColoredOutput "Keeping current instance running." $ColorInfo
+            Write-ColoredOutput ""
+            Read-Host "Press Enter to return to menu"
+            Show-Menu
+            return
+        }
+    }
+    
+    try {
+        Write-ColoredOutput "Launching: $AppPath" $ColorInfo
+        
+        # Try to start with admin privileges first (recommended)
+        try {
+            $process = Start-Process $AppPath -Verb RunAs -PassThru -ErrorAction Stop
+            Start-Sleep -Seconds 3
+            
+            if ($process -and !$process.HasExited) {
+                Write-ColoredOutput "✅ $AppName started successfully with admin privileges!" $ColorSuccess
+                Write-ColoredOutput "Process ID: $($process.Id)" $ColorInfo
+            } else {
+                throw "Process exited immediately"
+            }
+        }
+        catch {
+            Write-ColoredOutput "Admin start failed, trying normal mode..." $ColorWarning
+            
+            # Try normal start
+            try {
+                $process = Start-Process $AppPath -PassThru -ErrorAction Stop
+                Start-Sleep -Seconds 3
+                
+                if ($process -and !$process.HasExited) {
+                    Write-ColoredOutput "✅ $AppName started successfully!" $ColorSuccess
+                    Write-ColoredOutput "Process ID: $($process.Id)" $ColorInfo
+                    Write-ColoredOutput "⚠ Note: Running without admin privileges may limit functionality" $ColorWarning
+                } else {
+                    throw "Process exited immediately in normal mode"
+                }
+            }
+            catch {
+                throw "Both admin and normal start methods failed: $_"
+            }
+        }
+        
+        Write-ColoredOutput ""
+        Write-ColoredOutput "💡 Tips:" $ColorPrompt
+        Write-ColoredOutput "- Solo Win key tap: Opens PowerToys Command Palette" $ColorInfo
+        Write-ColoredOutput "- Win+key combinations: Work as normal (Win+R, Win+L, etc.)" $ColorInfo
+        Write-ColoredOutput "- Ctrl+Alt+F12: Emergency quit hotkey" $ColorInfo
+        
+    }
+    catch {
+        Write-ColoredOutput "Failed to start $AppName" $ColorError
+        Write-ColoredOutput ""
+        Write-ColoredOutput "Troubleshooting:" $ColorPrompt
+        Write-ColoredOutput "1. Make sure the application was installed correctly" $ColorInfo
+        Write-ColoredOutput "2. Try running PowerShell as Administrator" $ColorInfo
+        Write-ColoredOutput "3. Check if antivirus is blocking the application" $ColorInfo
+    }
+    
+    Write-ColoredOutput ""
+    Read-Host "Press Enter to return to menu"
+    Show-Menu
+}
+
+function Stop-Application {
+    Show-Header
+    Write-ColoredOutput "Stopping $AppName..." $ColorWarning
+    Write-ColoredOutput ""
+    
+    try {
+        # Check if running first
+        $processNames = @("WinKey_CommandPallette_Replacement", "WinKeyRemapper", "WinKey_CommandPalette_Replacement")
+        $foundProcesses = @()
+        
+        foreach ($name in $processNames) {
+            $processes = Get-Process -Name $name -ErrorAction SilentlyContinue
+            if ($processes) {
+                $foundProcesses += $processes
+            }
+        }
+        
+        if ($foundProcesses.Count -eq 0) {
+            Write-ColoredOutput "ℹ $AppName is not running." $ColorInfo
+        } else {
+            Write-ColoredOutput "Found $($foundProcesses.Count) running instance(s):" $ColorInfo
+            foreach ($proc in $foundProcesses) {
+                Write-ColoredOutput "  - Process ID: $($proc.Id), Name: $($proc.ProcessName)" $ColorInfo
+            }
+            Write-ColoredOutput ""
+            
+            $confirm = Read-Host "Stop all instances? (y/n)"
+            if ($confirm -eq 'y' -or $confirm -eq 'Y') {
+                Write-ColoredOutput "Stopping processes..." $ColorWarning
+                
+                foreach ($proc in $foundProcesses) {
+                    try {
+                        $proc.Kill()
+                        Write-ColoredOutput "✓ Stopped process $($proc.Id) ($($proc.ProcessName))" $ColorSuccess
+                    }
+                    catch {
+                        Write-ColoredOutput "✗ Failed to stop process $($proc.Id): $_" $ColorError
+                    }
+                }
+                
+                Start-Sleep -Seconds 2
+                
+                # Verify they're stopped
+                $remainingProcesses = @()
+                foreach ($name in $processNames) {
+                    $remaining = Get-Process -Name $name -ErrorAction SilentlyContinue
+                    if ($remaining) {
+                        $remainingProcesses += $remaining
+                    }
+                }
+                
+                if ($remainingProcesses.Count -eq 0) {
+                    Write-ColoredOutput "✅ All instances stopped successfully!" $ColorSuccess
+                } else {
+                    Write-ColoredOutput "⚠ $($remainingProcesses.Count) process(es) are still running" $ColorWarning
+                    Write-ColoredOutput "They may restart automatically or require forceful termination" $ColorInfo
+                }
+            } else {
+                Write-ColoredOutput "Operation cancelled." $ColorInfo
+            }
+        }
+    }
+    catch {
+        Write-ColoredOutput "Error while stopping application: $_" $ColorError
+    }
+    
+    Write-ColoredOutput ""
+    Read-Host "Press Enter to return to menu"
+    Show-Menu
 }
 
 function Download-FileWithProgress {
@@ -443,6 +981,30 @@ function Install-Application {
     }
     
     try {
+        # Get latest release info from GitHub
+        Write-ColoredOutput "Fetching latest release information from GitHub..." $ColorInfo
+        $latestRelease = Get-LatestVersionFromGitHub
+        
+        if ($latestRelease -eq $null) {
+            Write-ColoredOutput "ERROR: Could not fetch release information from GitHub!" $ColorError
+            Write-ColoredOutput "Falling back to hardcoded download URL..." $ColorWarning
+            $downloadUrl = $DownloadUrl
+            $releaseVersion = "Unknown"
+        } else {
+            if ([string]::IsNullOrEmpty($latestRelease.DownloadUrl)) {
+                Write-ColoredOutput "ERROR: No download URL found in latest release!" $ColorError
+                Write-ColoredOutput "Falling back to hardcoded download URL..." $ColorWarning
+                $downloadUrl = $DownloadUrl
+                $releaseVersion = $latestRelease.Version
+            } else {
+                $downloadUrl = $latestRelease.DownloadUrl
+                $releaseVersion = $latestRelease.Version
+                Write-ColoredOutput "✅ Found latest release: $($latestRelease.Name)" $ColorSuccess
+                Write-ColoredOutput "Version: $releaseVersion" $ColorInfo
+                Write-ColoredOutput "Published: $($latestRelease.PublishedAt)" $ColorInfo
+            }
+        }
+        
         # Stop any running instances
         Stop-ApplicationProcess
         
@@ -454,7 +1016,9 @@ function Install-Application {
         
         # Download the ZIP file
         $tempZip = Join-Path $env:TEMP $ZipName
-        if (Download-FileWithProgress -Url $DownloadUrl -Destination $tempZip) {
+        Write-ColoredOutput "Downloading $AppName $releaseVersion..." $ColorInfo
+        
+        if (Download-FileWithProgress -Url $downloadUrl -Destination $tempZip) {
             
             # Extract ZIP to installation directory
             Write-ColoredOutput "Extracting files to: $InstallPath..." $ColorInfo
@@ -482,7 +1046,21 @@ function Install-Application {
                 
                 # Verify the main EXE exists
                 if (Test-Path $AppPath) {
+                    $installedVersion = Get-ApplicationVersion -ExePath $AppPath
                     Write-ColoredOutput "Main executable found: $ExeName" $ColorSuccess
+                    Write-ColoredOutput "Installed version: $installedVersion" $ColorInfo
+                    
+                    # Create a version file with the GitHub release version for future reference
+                    if ($releaseVersion -ne "Unknown" -and ![string]::IsNullOrEmpty($releaseVersion)) {
+                        try {
+                            $releaseTagFile = Join-Path $InstallPath "release-tag.txt"
+                            $releaseVersion | Out-File -FilePath $releaseTagFile -Encoding UTF8 -Force
+                            Write-ColoredOutput "Created release tag file with version: $releaseVersion" $ColorSuccess
+                        }
+                        catch {
+                            Write-ColoredOutput "Warning: Could not create release tag file: $_" $ColorWarning
+                        }
+                    }
                 } else {
                     throw "Main executable not found after extraction: $ExeName"
                 }
@@ -516,6 +1094,7 @@ function Install-Application {
             Write-ColoredOutput "================================================================" $ColorSuccess
             Write-ColoredOutput "                    INSTALLATION COMPLETE!                     " $ColorSuccess
             Write-ColoredOutput "================================================================" $ColorSuccess
+            Write-ColoredOutput "Installed: $AppName $releaseVersion" $ColorSuccess
             Write-ColoredOutput ""
             
             # Ask to start the application
@@ -538,7 +1117,7 @@ function Install-Application {
                         Start-Sleep -Seconds 2
                         
                         if ($process -and !$process.HasExited) {
-                            Write-ColoredOutput "$AppName started successfully (Admin mode)!" $ColorSuccess
+                            Write-ColoredOutput "$AppName $releaseVersion started successfully (Admin mode)!" $ColorSuccess
                         } else {
                             throw "Process exited immediately"
                         }
@@ -552,7 +1131,7 @@ function Install-Application {
                             Start-Sleep -Seconds 2
                             
                             if ($process -and !$process.HasExited) {
-                                Write-ColoredOutput "$AppName started successfully!" $ColorSuccess
+                                Write-ColoredOutput "$AppName $releaseVersion started successfully!" $ColorSuccess
                             } else {
                                 throw "Process exited immediately in normal mode too"
                             }
@@ -581,6 +1160,11 @@ function Install-Application {
     }
     catch {
         Write-ColoredOutput "Installation failed: $_" $ColorError
+        Write-ColoredOutput ""
+        Write-ColoredOutput "Troubleshooting:" $ColorPrompt
+        Write-ColoredOutput "1. Check your internet connection" $ColorInfo
+        Write-ColoredOutput "2. Visit GitHub manually: https://github.com/ArjunC1234/WinKey_CommandPallette_Replacement/releases" $ColorInfo
+        Write-ColoredOutput "3. Try running as Administrator" $ColorInfo
     }
     
     Write-ColoredOutput ""
@@ -812,6 +1396,10 @@ function Show-Status {
         Write-ColoredOutput "✓ $AppName is installed" $ColorSuccess
         Write-ColoredOutput "  Location: $AppPath" $ColorInfo
         
+        # Show version
+        $version = Get-ApplicationVersion -ExePath $AppPath
+        Write-ColoredOutput "  Version: $version" $ColorInfo
+        
         # Check if running
         $processNames = @("WinKey_CommandPallette_Replacement", "WinKeyRemapper", "WinKey_CommandPalette_Replacement")
         $runningProcess = $null
@@ -1026,6 +1614,9 @@ try {
         "startup-disable" { Disable-Startup }
         "status" { Show-Status }
         "logs" { Show-StartupLogs }
+        "start" { Start-Application }
+        "stop" { Stop-Application }
+        "update" { Check-Updates }
         "menu" { Show-Menu }
     }
 }
