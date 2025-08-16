@@ -1,4 +1,3 @@
-# WinKey_CommandPallette_Replacement
 # WinKey → PowerToys Command Palette
 
 *A small C# utility that makes a **Win** key tap open **PowerToys Command Palette** and prevents the Windows **Start/Search** UI from appearing.*
