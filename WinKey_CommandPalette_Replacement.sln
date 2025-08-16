@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.36310.24
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WinKey_CommandPalette_Replacement", "WinKey_CommandPallette_Replacement\WinKey_CommandPalette_Replacement.csproj", "{3F23949F-49B0-412D-BC79-E573A5D252A5}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WinKey_CommandPalette_Replacement", "WinKey_CommandPalette_Replacement\WinKey_CommandPalette_Replacement.csproj", "{3F23949F-49B0-412D-BC79-E573A5D252A5}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
