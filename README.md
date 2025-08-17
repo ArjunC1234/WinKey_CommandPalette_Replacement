@@ -38,7 +38,7 @@
 ## **Configuration (in `Program.cs`)**
 ```csharp
 // Match these to your Command Palette hotkey:
-const int HOTKEY_MOD = VK_CONTROL; // default: Ctrl
+const int HOTKEY_MOD = VK_MENU; // default: Alt
 const int HOTKEY_KEY = VK_SPACE;   // default: Space
 
 // If true, swallows other keys pressed while Win is held:
