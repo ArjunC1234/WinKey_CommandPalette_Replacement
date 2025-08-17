@@ -67,7 +67,7 @@ const bool STRICT_MODE = true;
 
 ## **Donate**
 - Not required but any support is appreciated!
-- [Donate Here](buymeacoffee.com/arjuncattamanchi)
+- [Donate Here](https://buymeacoffee.com/arjuncattamanchi)
    
 ---
 
