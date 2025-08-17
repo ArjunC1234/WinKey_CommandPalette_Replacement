@@ -38,8 +38,11 @@
 ## **Configuration (in `Program.cs`)**
 ```csharp
 // Match these to your Command Palette hotkey:
+// Windows key press is simulated in additions to the following modifiers:
 const int HOTKEY_MOD = VK_MENU; // default: Alt
 const int HOTKEY_KEY = VK_SPACE;   // default: Space
+
+// Match Command Palette (or any other action) hotkey to win + alt + space
 
 // If true, swallows other keys pressed while Win is held:
 const bool STRICT_MODE = true;
