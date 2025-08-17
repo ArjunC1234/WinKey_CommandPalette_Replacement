@@ -1,7 +1,3 @@
-# WinKey\_CommandPallette\_Replacement
-
-
-
 # WinKey → PowerToys Command Palette
 
 *A small C# utility that makes a **Win** key tap open **PowerToys Command Palette** and prevents the Windows **Start/Search** UI from appearing.*
@@ -69,6 +65,10 @@ const bool STRICT_MODE = true;
 3. **Triggers:** **At log on**
 4. **Actions:** **Start a program** → select this EXE
 
+## **Donate**
+- Not required but any support is appreciated!
+- buymeacoffee.com/arjuncattamanchi
+   
 ---
 
 ## **License**
