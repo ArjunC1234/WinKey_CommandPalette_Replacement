@@ -20,6 +20,8 @@
 ---
 
 ## **Quick Start**
+[![Watch the video](https://img.youtube.com/vi/JWPCzTo-_8w/0.jpg)](https://www.youtube.com/watch?v=JWPCzTo-_8w)
+
 1. In **PowerToys → Command Palette**, set a hotkey (for example, **Ctrl+Space**).
 2. Run `WinKey_CommandPalette.exe` **as Administrator**.
 3. Tap **Win** → Command Palette opens.  
