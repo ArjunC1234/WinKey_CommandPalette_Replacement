@@ -14,7 +14,7 @@ internal static class Program
     const int VK_ESCAPE = 0x1B;
     const int VK_CONTROL = 0x11, VK_LCONTROL = 0xA2, VK_RCONTROL = 0xA3;
     const int VK_MENU = 0x12;     // Alt
-    const int VK_SHIFT = 0x10;
+    const int VK_SHIFT = 0x10, VK_LSHIFT = 0xA0, VK_RSHIFT = 0xA1;
     const int VK_SPACE = 0x20;
     const int VK_F12 = 0x7B;
 
@@ -37,6 +37,7 @@ internal static class Program
     // State tracking
     static bool _winDown = false;
     static bool _ctrlDown = false;
+    static bool _shiftDown = false;
     static bool _passthroughMode = false;  // NEW: Passthrough mode flag
     static int _winKeyPressed = 0;
     static List<KeyEvent> _keysWhileWinDown = new List<KeyEvent>();
@@ -142,6 +143,12 @@ internal static class Program
             // Debug output
             Console.WriteLine($"Key: {vk:X} ({(VirtualKeyCode)vk}) {(isDown ? "DOWN" : "UP")} - Win: {_winDown}, Passthrough: {_passthroughMode}");
 
+            // Track Shift state
+            if (vk == VK_LSHIFT || vk == VK_RSHIFT || vk == VK_SHIFT)
+            {
+                _shiftDown = isDown;
+            }
+
             // Track Ctrl state
             if (vk == VK_LCONTROL || vk == VK_RCONTROL || vk == VK_CONTROL)
             {
@@ -180,7 +187,7 @@ internal static class Program
             }
 
             // Handle Ctrl+Esc
-            if (vk == VK_ESCAPE && _ctrlDown)
+            if (vk == VK_ESCAPE && _ctrlDown && !_shiftDown)
             {
                 if (isDown)
                 {
