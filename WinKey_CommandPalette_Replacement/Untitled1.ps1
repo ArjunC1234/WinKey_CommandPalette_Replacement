@@ -1,4 +1,8 @@
-﻿param(
+﻿﻿# Win Key Remapper - Complete Installer and Manager
+# Run as Administrator for installation/uninstallation
+# Can run as regular user for startup management
+
+param(
     [Parameter(HelpMessage = "Action to perform: install, uninstall, startup-enable, startup-disable, status, logs, start, stop, update, or menu")]
     [ValidateSet("install", "uninstall", "startup-enable", "startup-disable", "status", "logs", "start", "stop", "update", "menu")]
     [string]$Action = "menu"
@@ -1628,20 +1632,21 @@ function Configure-Shortcut {
     Write-ColoredOutput "" 
 
     # Explain what this does
-    Write-ColoredOutput "This shortcut will be simulated whenever you TAP the Windows key." $ColorInfo
+    Write-ColoredOutput "This shortcut will be fired when you tap the Windows key." $ColorInfo
     Write-ColoredOutput "By default, it's Win + Alt + Space (for PowerToys Command Palette)." $ColorInfo
     Write-ColoredOutput "" 
 
-    # Ask which modifiers to include
-    $winAns   = Read-Host "Include Win?   (y/n, default: y)"
-    $ctrlAns  = Read-Host "Include Ctrl?  (y/n, default: n)"
-    $altAns   = Read-Host "Include Alt?   (y/n, default: y)"
-    $shiftAns = Read-Host "Include Shift? (y/n, default: n)"
+    # Win is almost always part of this combo – your app assumes Win-tap is the trigger
+    $useWin = $true
+    Write-ColoredOutput "The Windows key will always be part of this shortcut." $ColorInfo
 
-    $useWin   = if ($winAns  -eq '') { $true } else { $winAns  -match '^[Yy]' }
-    $useCtrl  =              $ctrlAns -match '^[Yy]'
-    $useAlt   = if ($altAns  -eq '') { $true } else { $altAns  -match '^[Yy]' }
-    $useShift =              $shiftAns -match '^[Yy]'
+    $ctrlAns  = Read-Host "Include Ctrl? (y/n, default: n)"
+    $altAns   = Read-Host "Include Alt?  (y/n, default: y)"
+    $shiftAns = Read-Host "Include Shift?(y/n, default: n)"
+
+    $useCtrl  = $ctrlAns  -match '^[Yy]'
+    $useAlt   = if ($altAns -eq '') { $true } else { $altAns -match '^[Yy]' }
+    $useShift = $shiftAns -match '^[Yy]'
 
     Write-ColoredOutput "" 
     Write-ColoredOutput "Enter the main key name (examples: Space, P, R, Esc)." $ColorInfo
@@ -1687,6 +1692,7 @@ function Configure-Shortcut {
     Read-Host "Press Enter to return to menu"
     Show-Menu
 }
+
 
 # Main execution
 try {
