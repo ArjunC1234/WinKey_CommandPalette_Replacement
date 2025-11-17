@@ -1,14 +1,13 @@
 ﻿// Build as WinExe (.NET 6/7/8). Run as Administrator for coverage in elevated apps.
 // Pure state-based handling; always blocks Win key and simulates the appropriate sequence
-
-using System;
-using System.Collections.Generic;
+using System.Globalization; // add this at the top with your other using statements
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Windows.Forms;
+using System.Text.Json;
 
 internal static class Program
 {
+    static Shortcut _paletteShortcut;
     // ===== Virtual keys =====
     const int VK_LWIN = 0x5B, VK_RWIN = 0x5C;
     const int VK_ESCAPE = 0x1B;
@@ -16,7 +15,7 @@ internal static class Program
     const int VK_MENU = 0x12;     // Alt
     const int VK_SHIFT = 0x10, VK_LSHIFT = 0xA0, VK_RSHIFT = 0xA1;
     const int VK_SPACE = 0x20;
-    const int VK_F12 = 0x7B;
+    const int VK_F12 = 0x7B; 
 
     // ===== Key event flags =====
     const uint KEYEVENTF_KEYUP = 0x0002;
@@ -61,6 +60,11 @@ internal static class Program
         Console.WriteLine("Testing basic input capabilities...");
         TestInputCapabilities();
 
+        _paletteShortcut = LoadShortcutConfigOrDefault();
+
+        Console.WriteLine("Starting Win key remapper with debugging...");
+        Console.WriteLine($"Using shortcut: Win={_paletteShortcut.Win}, Ctrl={_paletteShortcut.Ctrl}, Alt={_paletteShortcut.Alt}, Shift={_paletteShortcut.Shift}, MainKey=0x{_paletteShortcut.MainKey:X}");
+
         // Install low-level keyboard hook
         using var curProcess = Process.GetCurrentProcess();
         using var curModule = curProcess.MainModule!;
@@ -76,6 +80,161 @@ internal static class Program
 
         Console.WriteLine("Hook installed. Press Ctrl+Alt+F12 to quit.");
         Application.Run();
+    }
+    static Shortcut LoadShortcutConfigOrDefault()
+    {
+        try
+        {
+            string exeDir = AppDomain.CurrentDomain.BaseDirectory;
+            string configPath = Path.Combine(exeDir, "shortcut.json");
+
+            if (!File.Exists(configPath))
+            {
+                Console.WriteLine("shortcut.json not found, using default Win+Alt+Space");
+                return new Shortcut
+                {
+                    Win = true,
+                    Ctrl = false,
+                    Alt = true,
+                    Shift = false,
+                    MainKey = VK_SPACE
+                };
+            }
+
+            string json = File.ReadAllText(configPath);
+            var cfg = JsonSerializer.Deserialize<ShortcutConfig>(json);
+
+            if (cfg == null)
+                throw new Exception("shortcut.json deserialized to null");
+
+            return new Shortcut
+            {
+                Win = cfg.Win,
+                Ctrl = cfg.Ctrl,
+                Alt = cfg.Alt,
+                Shift = cfg.Shift,
+                MainKey = MapKeyNameToVk(cfg.MainKey)
+            };
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load shortcut.json: {ex.Message}");
+            Console.WriteLine("Falling back to default Win+Alt+Space");
+
+            return new Shortcut
+            {
+                Win = true,
+                Ctrl = false,
+                Alt = true,
+                Shift = false,
+                MainKey = VK_SPACE
+            };
+        }
+    } 
+    static int MapKeyNameToVk(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return VK_SPACE;
+
+        // Accept things like "Ctrl+Shift+P" but only use the last token as the main key,
+        // since modifiers are already handled by the Win/Ctrl/Alt/Shift booleans in JSON
+        var raw = name.Trim();
+        var parts = raw.Split('+', StringSplitOptions.RemoveEmptyEntries);
+        var s = parts[^1].Trim().ToUpperInvariant();
+
+        // 1) Single character: letters A–Z or digits 0–9
+        if (s.Length == 1)
+        {
+            char c = s[0];
+            if (c >= 'A' && c <= 'Z')
+                return c;          // 'A' → 0x41, etc.
+            if (c >= '0' && c <= '9')
+                return c;          // '0' → 0x30, etc.
+        }
+
+        // 2) Function keys: F1–F24
+        if (s.Length >= 2 && s[0] == 'F' && int.TryParse(s.Substring(1), out int fn))
+        {
+            if (fn >= 1 && fn <= 24)
+                return 0x70 + (fn - 1); // F1=0x70, F2=0x71, ...
+        }
+
+        // 3) Raw hex virtual key code: e.g. "0x5B"
+        if (s.StartsWith("0X") && int.TryParse(s.Substring(2), NumberStyles.HexNumber,
+                                                CultureInfo.InvariantCulture, out int hexVk))
+        {
+            return hexVk;
+        }
+
+        // 4) Named special keys
+        switch (s)
+        {
+            case "SPACE":
+            case "SPACEBAR":
+                return VK_SPACE;
+
+            case "ESC":
+            case "ESCAPE":
+                return VK_ESCAPE;
+
+            case "TAB":
+                return 0x09;
+
+            case "ENTER":
+            case "RETURN":
+                return 0x0D;
+
+            case "BACKSPACE":
+            case "BACK":
+                return 0x08;
+
+            case "INSERT":
+            case "INS":
+                return 0x2D;
+
+            case "DELETE":
+            case "DEL":
+                return 0x2E;
+
+            case "HOME":
+                return 0x24;
+
+            case "END":
+                return 0x23;
+
+            case "PAGEUP":
+            case "PGUP":
+                return 0x21;
+
+            case "PAGEDOWN":
+            case "PGDN":
+                return 0x22;
+
+            case "UP":
+            case "UPARROW":
+                return 0x26;
+
+            case "DOWN":
+            case "DOWNARROW":
+                return 0x28;
+
+            case "LEFT":
+            case "LEFTARROW":
+                return 0x25;
+
+            case "RIGHT":
+            case "RIGHTARROW":
+                return 0x27;
+
+            case "CAPSLOCK":
+            case "CAPS":
+                return 0x14;
+
+            // You can add more here: WIN, MENU, OEM keys, media keys, etc.
+            default:
+                Console.WriteLine($"Unknown key name '{name}', defaulting to SPACE");
+                return VK_SPACE;
+        }
     }
 
     static void TestInputCapabilities()
@@ -269,235 +428,77 @@ internal static class Program
 
     static void ActivateCommandPalette()
     {
-        Console.WriteLine("Sending Win+Alt+Space...");
+        Console.WriteLine("Activating command palette shortcut...");
 
-        // Check current thread's input capabilities
-        Console.WriteLine("Checking input capabilities...");
-
-        // Try different approaches
-        Console.WriteLine("Method 1: SendInput");
-        if (!TrySendInputMethod())
+        if (!SendShortcutWithSendInput(_paletteShortcut))
         {
-            Console.WriteLine("Method 2: keybd_event");
-            TryKeybdEventMethod();
+            Console.WriteLine("SendInput failed, falling back to keybd_event...");
+            SendShortcutWithKeybdEvent(_paletteShortcut);
         }
     }
 
-    static bool TrySendInputMethod()
-    {
-        var testInput = new INPUT[]
-        {
-            KeyDown(VK_SPACE),
-            KeyUp(VK_SPACE)
-        };
-
-        // Clear previous error
-        SetLastError(0);
-
-        uint result = SendInput((uint)testInput.Length, testInput, Marshal.SizeOf(typeof(INPUT)));
-        int error = Marshal.GetLastWin32Error();
-
-        Console.WriteLine($"SendInput test: {result}/{testInput.Length}, error: {error}");
-
-        if (result == 0 || result < testInput.Length)
-        {
-            // Check common error codes
-            switch (error)
-            {
-                case 0:
-                    Console.WriteLine("Error 0: Likely UIPI (User Interface Privilege Isolation) blocking");
-                    break;
-                case 5:
-                    Console.WriteLine("Error 5: Access denied - run as Administrator");
-                    break;
-                case 87:
-                    Console.WriteLine("Error 87: Invalid parameter - INPUT structure issue");
-                    break;
-                default:
-                    Console.WriteLine($"Unknown error: {error}");
-                    break;
-            }
-            return false; // Failed
-        }
-
-        // If test worked, send the full sequence
-        Console.WriteLine("SendInput working, sending full sequence...");
-        var inputs = new INPUT[]
-        {
-            KeyDown(VK_LWIN),
-            KeyDown(VK_MENU),
-            KeyDown(VK_SPACE),
-            KeyUp(VK_SPACE),
-            KeyUp(VK_MENU),
-            KeyUp(VK_LWIN)
-        };
-
-        // Tag all inputs
-        for (int i = 0; i < inputs.Length; i++)
-            inputs[i].U.ki.dwExtraInfo = OUR_TAG;
-
-        SetLastError(0);
-        uint fullResult = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
-        int fullError = Marshal.GetLastWin32Error();
-
-        Console.WriteLine($"Full SendInput result: {fullResult}/{inputs.Length}, error: {fullError}");
-
-        return fullResult == inputs.Length && fullResult > 0;
-    }
-
-    static void TryKeybdEventMethod()
-    {
-        Console.WriteLine("=== FALLBACK: Using keybd_event for Win+Alt+Space ===");
-
-        // Use legacy keybd_event API
-        try
-        {
-            keybd_event((byte)VK_LWIN, 0, 0, OUR_TAG);           // Win down
-            System.Threading.Thread.Sleep(5);
-            keybd_event((byte)VK_MENU, 0, 0, OUR_TAG);           // Alt down  
-            System.Threading.Thread.Sleep(5);
-            keybd_event((byte)VK_SPACE, 0, 0, OUR_TAG);          // Space down
-            System.Threading.Thread.Sleep(5);
-            keybd_event((byte)VK_SPACE, 0, KEYEVENTF_KEYUP, OUR_TAG);  // Space up
-            System.Threading.Thread.Sleep(5);
-            keybd_event((byte)VK_MENU, 0, KEYEVENTF_KEYUP, OUR_TAG);   // Alt up
-            System.Threading.Thread.Sleep(5);
-            keybd_event((byte)VK_LWIN, 0, KEYEVENTF_KEYUP, OUR_TAG);   // Win up
-
-            Console.WriteLine("keybd_event Win+Alt+Space sequence sent successfully");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"keybd_event failed: {ex.Message}");
-        }
-    }
-
-    static void SimulateWinKeySequence()
-    {
-        Console.WriteLine("Simulating Win+keys sequence...");
-
-        // Try SendInput first, fall back to keybd_event
-        if (!TrySendInputWinSequence())
-        {
-            Console.WriteLine("SendInput failed, trying keybd_event for Win sequence...");
-            TryKeybdEventWinSequence();
-        }
-    }
-
-    static bool TrySendInputWinSequence()
+    static bool SendShortcutWithSendInput(Shortcut shortcut)
     {
         var inputs = new List<INPUT>();
 
-        // Start with Win key down
-        inputs.Add(KeyDown(_winKeyPressed));
+        // Modifiers down
+        if (shortcut.Win) inputs.Add(KeyDown(VK_LWIN));
+        if (shortcut.Ctrl) inputs.Add(KeyDown(VK_CONTROL));
+        if (shortcut.Alt) inputs.Add(KeyDown(VK_MENU));
+        if (shortcut.Shift) inputs.Add(KeyDown(VK_SHIFT));
 
-        // Replay all recorded events in order
-        foreach (var keyEvent in _keysWhileWinDown)
-        {
-            if (keyEvent.IsDown)
-                inputs.Add(KeyDown(keyEvent.VirtualKey));
-            else
-                inputs.Add(KeyUp(keyEvent.VirtualKey));
-        }
+        // Main key down/up
+        inputs.Add(KeyDown(shortcut.MainKey));
+        inputs.Add(KeyUp(shortcut.MainKey));
 
-        // End with Win key up
-        inputs.Add(KeyUp(_winKeyPressed));
+        // Modifiers up
+        if (shortcut.Shift) inputs.Add(KeyUp(VK_SHIFT));
+        if (shortcut.Alt) inputs.Add(KeyUp(VK_MENU));
+        if (shortcut.Ctrl) inputs.Add(KeyUp(VK_CONTROL));
+        if (shortcut.Win) inputs.Add(KeyUp(VK_LWIN));
 
-        Console.WriteLine($"Attempting to send {inputs.Count} input events via SendInput");
+        var arr = inputs.ToArray();
+        for (int i = 0; i < arr.Length; i++)
+            arr[i].U.ki.dwExtraInfo = OUR_TAG;
 
-        // Clear error and try
         SetLastError(0);
-        var inputArray = inputs.ToArray();
+        uint sent = SendInput((uint)arr.Length, arr, Marshal.SizeOf(typeof(INPUT)));
+        int err = Marshal.GetLastWin32Error();
 
-        // Tag all inputs
-        for (int i = 0; i < inputArray.Length; i++)
-            inputArray[i].U.ki.dwExtraInfo = OUR_TAG;
-
-        uint sent = SendInput((uint)inputArray.Length, inputArray, Marshal.SizeOf(typeof(INPUT)));
-        int error = Marshal.GetLastWin32Error();
-
-        Console.WriteLine($"SendInput Win sequence result: {sent}/{inputArray.Length}, error: {error}");
-
-        // Return true only if we successfully sent all events
-        bool success = sent == inputArray.Length && sent > 0;
-
-        if (!success)
-        {
-            Console.WriteLine($"SendInput Win sequence failed - will try keybd_event fallback");
-        }
-
-        return success;
+        Console.WriteLine($"SendInput shortcut result: {sent}/{arr.Length}, error: {err}");
+        return sent == arr.Length && sent > 0;
     }
 
-    static void TryKeybdEventWinSequence()
+    static void SendShortcutWithKeybdEvent(Shortcut shortcut)
     {
-        Console.WriteLine("=== FALLBACK: Using keybd_event for Win+key sequence ===");
+        Console.WriteLine("=== FALLBACK: Using keybd_event for shortcut ===");
 
         try
         {
-            // Win key down
-            Console.WriteLine($"  keybd_event: Win({_winKeyPressed:X}) DOWN");
-            keybd_event((byte)_winKeyPressed, 0, 0, OUR_TAG);
+            void Down(int vk) => keybd_event((byte)vk, 0, 0, OUR_TAG);
+            void Up(int vk) => keybd_event((byte)vk, 0, KEYEVENTF_KEYUP, OUR_TAG);
+
+            if (shortcut.Win) Down(VK_LWIN);
+            if (shortcut.Ctrl) Down(VK_CONTROL);
+            if (shortcut.Alt) Down(VK_MENU);
+            if (shortcut.Shift) Down(VK_SHIFT);
             System.Threading.Thread.Sleep(5);
 
-            // All other keys in sequence
-            foreach (var keyEvent in _keysWhileWinDown)
-            {
-                uint flags = keyEvent.IsDown ? 0u : KEYEVENTF_KEYUP;
-                Console.WriteLine($"  keybd_event: {keyEvent.VirtualKey:X} {(keyEvent.IsDown ? "DOWN" : "UP")}");
-                keybd_event((byte)keyEvent.VirtualKey, 0, flags, OUR_TAG);
-                System.Threading.Thread.Sleep(5);
-            }
+            Down(shortcut.MainKey);
+            System.Threading.Thread.Sleep(5);
+            Up(shortcut.MainKey);
+            System.Threading.Thread.Sleep(5);
 
-            // Win key up
-            Console.WriteLine($"  keybd_event: Win({_winKeyPressed:X}) UP");
-            keybd_event((byte)_winKeyPressed, 0, KEYEVENTF_KEYUP, OUR_TAG);
+            if (shortcut.Shift) Up(VK_SHIFT);
+            if (shortcut.Alt) Up(VK_MENU);
+            if (shortcut.Ctrl) Up(VK_CONTROL);
+            if (shortcut.Win) Up(VK_LWIN);
 
-            Console.WriteLine("keybd_event Win sequence completed successfully!");
+            Console.WriteLine("keybd_event shortcut sequence sent successfully");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"keybd_event Win sequence failed: {ex.Message}");
-        }
-    }
-
-    static void SendInputSequence(INPUT[] inputs)
-    {
-        // Clear any previous error
-        SetLastError(0);
-
-        // Tag all inputs
-        for (int i = 0; i < inputs.Length; i++)
-            inputs[i].U.ki.dwExtraInfo = OUR_TAG;
-
-        // Debug: show what we're about to send
-        Console.WriteLine("Sending input sequence:");
-        for (int i = 0; i < inputs.Length; i++)
-        {
-            var input = inputs[i];
-            var ki = input.U.ki;
-            string action = (ki.dwFlags & 2) != 0 ? "UP" : "DOWN";
-            Console.WriteLine($"  {i}: Key {ki.wVk:X} {action}");
-        }
-
-        uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
-        Console.WriteLine($"SendInput result: {sent}/{inputs.Length}");
-
-        if (sent == 0)
-        {
-            int error = Marshal.GetLastWin32Error();
-            Console.WriteLine($"SendInput failed with error: {error}");
-
-            // Check if we're running with proper privileges
-            if (error == 5) // ERROR_ACCESS_DENIED
-            {
-                Console.WriteLine("ERROR: Access denied. Make sure you're running as Administrator!");
-            }
-        }
-        else if (sent < inputs.Length)
-        {
-            int error = Marshal.GetLastWin32Error();
-            Console.WriteLine($"SendInput partially failed. Error: {error}");
+            Console.WriteLine($"keybd_event shortcut failed: {ex.Message}");
         }
     }
 
@@ -591,6 +592,25 @@ internal static class Program
         public uint dwFlags;
         public uint time;
         public IntPtr dwExtraInfo;
+    }
+
+
+    struct Shortcut
+    {
+        public bool Win;
+        public bool Ctrl;
+        public bool Alt;
+        public bool Shift;
+        public int MainKey; // virtual keycode, e.g. VK_SPACE or 'P'
+    }
+
+    class ShortcutConfig
+    {
+        public bool Win { get; set; }
+        public bool Ctrl { get; set; }
+        public bool Alt { get; set; }
+        public bool Shift { get; set; }
+        public string MainKey { get; set; } = "Space";
     }
 
     [DllImport("user32.dll", SetLastError = true)]
